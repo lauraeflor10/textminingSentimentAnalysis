@@ -1,0 +1,305 @@
+ ---
+title: "sriwijayaAirSA"
+author: "Laura Florencia"
+date: "4th January 2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(root.dir = getwd(), echo = FALSE)
+
+# Load required Packages
+require("tm")
+require("SnowballC")
+require("wordcloud")
+require("RColorBrewer")
+require("stringr")
+require("syuzhet")
+require("ggplot2")
+
+# Import Files
+docs <- enc2utf8(readLines("sriwijayaNet.csv"))
+dictionary <- get_sentiment_dictionary(dictionary = "syuzhet", language = "english")
+```  
+
+```{r Define Custom Functions, include=FALSE}
+text_mining_clean <- function(document){
+  docs <- Corpus(VectorSource(document))                                        #Load the data as a corpus
+  docs <- tm_map(docs, content_transformer(tolower))                            #Cleaning the text and convert the text to lower case
+  
+  fixWords <- content_transformer(function(x, pattern, replacement ) gsub(pattern, replacement, x))
+  docs <- tm_map(docs, fixWords, pattern="Howver", replacement="However")       #Replace Howver with However
+  docs <- tm_map(docs, fixWords, pattern="delayed", replacement="delay")        #Replace Delayed with Delay
+  
+  removeURL <- function(x) gsub("http[[:alnum:]]*", " ", x)
+  docs <- tm_map(docs, removeURL)                                               #Remove URLs
+  
+  toSpace <- content_transformer(function(x , pattern ) gsub(pattern, " ", x))  #Replacing a defined pattern with a space character
+  docs <- tm_map(docs, toSpace, "/")                                            #Remove Slash
+  docs <- tm_map(docs, toSpace, "@")                                            #Remove At
+  docs <- tm_map(docs, toSpace, "\\|")                                          #Remove Pipe
+  docs <- tm_map(docs, toSpace, "[[:punct:]]")                                  #Remove punctuation
+  docs <- tm_map(docs, toSpace, "[[:digit:]]")                                  #Remove numbers
+
+  docs <- tm_map(docs, removeWords, stopwords("english"))                       #Remove stopwords from corpus
+  docs <- tm_map(docs, removeWords, c(                                          #Remove your own stop word and specify your stopwords as a character vector
+        "flight",
+        "you",
+        "air",
+        "sriwijaya",
+        "airline",
+        "reviewed"
+      )
+    )
+
+  docs <- tm_map(docs, stripWhitespace)                                         #Eliminate extra white spaces
+    
+  return(docs)
+}
+
+get_frequency <- function(document){
+  v <- sort(
+      rowSums(
+        as.matrix(
+          TermDocumentMatrix(
+            suppressWarnings(
+              text_mining_clean(document)
+            )
+          )
+        )
+      ),
+      decreasing=TRUE
+    )
+  d <- data.frame(word = names(v),freq = v, stringsAsFactors = FALSE)
+  return(d)
+}
+
+generate_wordcloud <- function(document){
+  document <- head(document,50)
+  set.seed(runif(1, min=0, max=100))
+  return(
+    wordcloud(
+      words = document$word, 
+      freq = document$freq, 
+      min.freq = 1, 
+      max.words = 50, 
+      random.order = FALSE, 
+      rot.per = 0.35, 
+      colors = brewer.pal(8, "Dark2")
+    )
+  )
+}
+
+get_sentiment_score_detail <- function(data){
+  data <- as.data.frame(cbind(docs = data, get_nrc_sentiment(data)))
+  data$docs <- as.character(data$docs)
+  rownames(data) <- NULL
+  data$classification <- "Neutral"
+  data[which(data$positive - data$negative > 0), "classification"] <- "Positive"
+  data[which(data$positive - data$negative < 0), "classification"] <- "Negative"
+  return(data)
+}
+
+get_sentiment_score_summary <- function(data){
+  data <- data.frame(cbind(Sentiment = rownames(t(data[,2:9])),Count = rowSums(t(data[,2:9]))), stringsAsFactors = FALSE)
+  data$Count <- as.numeric(data$Count)
+  data$Sentiment <- paste(toupper(substring(data$Sentiment,1,1)), substring(data$Sentiment,2), sep = "", colapse = " ")
+  data$Sentiment <- factor(data$Sentiment, levels = data[order(data$Count, decreasing = TRUE),"Sentiment"])
+  return(data)
+}
+```
+
+## Sentiment Analysis in Indonesia's Aircraft
+
+The paper's aim is to modelling the sentiment analysist for one of the oldest Indonesian Aircraft, Sriwijaya Airlines. Sriwijaya Air founded in 2003 by Chandra Lie, Hendry Lie, Andi Halim and Fandy Lingga. In their first year, Sriwijaya Air grow rapidly, then today, Sriwijaya Air category's is in Medium Service Airline.  
+
+One reason why I want to do the Sentiment Analysis in the aircraft, because in 9th January 2021, Sriwijaya Air SJ-182 (Boeing Classic 737) found missing after 4 minutes takeoff. The tracking shows that the plane was at an altitude of 250ft and at that point contact with the plane was lost, while the pilot had not declared any sort of emergency. So I want to know more on how their performance in the past.  
+> Writer: Laura Florencia (430985)  
+> Data Science and Business Analytics  
+> University of Warsaw  
+
+We do the data cleaning at the beginning of this project. The cleaning such as:  
+> any unneccesary symbol  
+> change the text into lower caps so that the machine can read it as the same characters  
+> remove the pucntuation  
+> remove any numbers  
+> add extra stopwords  
+> remove stopwords from corpus  
+> remove stopwords  
+> remove extra white space  
+> remove URL  
+> replace words because maybe some typo in the dataset  
+
+For the data cleaning, it's actually we can decide which cleaning method that we aim to use or not.  
+In the paper, we put the **inspect(docs)** down below as a comment, because the result is about 400 lines long from the original dataset result that should be inspected before classified.  
+
+### Step 1
+
+Before we start our Sentiment Analysis, lets first take a look at all of the responses in general.
+```{r, Step 1 - Overall Wordcloud, messages=FALSE}
+data <- get_frequency(docs)
+generate_wordcloud(data)
+```
+
+### Step 2
+
+Now let's try and group phrases into a Positive, Neutral or Negative sentiment. We have identified  `r length(dictionary[which(dictionary$value < 0),"word"])` positive and `r length(dictionary[which(dictionary$value > 0),"word"])`negative words for our analysis.
+
+```{r Step 2}
+result <- get_sentiment_score_detail(suppressWarnings(as.matrix(unlist(text_mining_clean(docs)))))
+
+piedata <- data.frame(count = summary(factor(result$classification)))
+pie(piedata$count, labels = rownames(piedata), main = "Pie of Phrase Sentiment")
+
+bardata <- get_sentiment_score_summary(result)
+
+quickplot(
+  data = bardata,
+  x = Sentiment,  
+  weight = Count, 
+  fill = Sentiment, 
+  geom = "bar", 
+  ylab = "Count"
+) +
+  ggtitle("Survey Sentence Sentiments")
+```
+
+### Step 3
+
+Now, let's take the same sentiments and further classify each word. So here we are not only do one time observation, but we do the second filtering layer using *Formal Concept Analysis*.  
+
+Formal concept and formal context are two basic notions for Formal Concept Analysis (FCA). To generate a list of formal concepts, we need to have a formal context. Context is represented using a triad (O, A, R) where O is a set of objects, A is a set of elements and R is the binary relation between O and A.  
+
+In FCA, we are know about the formal concepts determination which requires a formal context respectively. It should have a set of objects, attributes and a degree of memberships of each object. The process obtaining formal concepts depends on a sequence of steps, such as:  
+1. Tokenization and stop word removal (we did it in the first steps)  
+2. Lemmatization which was applied in order to bring the objects into its root forms  
+3. POS tagging, which performed out of various tagged words  
+4. Aspect extraction  
+5. Matrix generation    
+
+```{r Step 3}
+docs_words <- data.frame(words = unlist(str_split(suppressWarnings(as.matrix(unlist(text_mining_clean(docs)))), "\\s+")), stringsAsFactors = FALSE)
+docs_words <- docs_words[which(docs_words$words != ""),]
+result <- get_sentiment_score_detail(docs_words)
+
+piedata <- data.frame(
+  rbind(
+    c(label = "Positive", count = length(result[which(result$classification == 'Positive'),"docs"])),
+    c(label = "Neutral", count = length(result[which(result$classification == 'Neutral'),"docs"])),
+    c(label = "Negative", count = length(result[which(result$classification == 'Negative'),"docs"]))
+  ),
+  stringsAsFactors  = FALSE
+)
+piedata$count <- as.numeric(piedata$count)
+pie(piedata$count, labels = piedata$label, main = "Pie of Word Sentiment")
+
+bardata <- get_sentiment_score_summary(unique(result))
+
+quickplot(
+  data = bardata,
+  x = Sentiment,  
+  weight = Count, 
+  fill = Sentiment, 
+  geom = "bar", 
+  ylab = "Count"
+) +
+  ggtitle("Survey Word Sentiments")
+
+positive_words <- get_frequency(result[which(result$classification == "Positive"),"docs"])
+negative_words <- get_frequency(result[which(result$classification == "Negative"),"docs"])
+neutral_words <- get_frequency(result[which(result$classification == "Neutral"),"docs"])
+```
+
+#### Positive Words
+
+```{R Positive Words}
+generate_wordcloud(positive_words)
+
+positive_words <- head(positive_words,10)
+positive_words$word <- factor(positive_words$word, levels = positive_words[order(positive_words$freq, decreasing = TRUE),"word"])
+
+ggplot(
+  data = positive_words,
+  aes(
+    x = word,
+    y = freq,
+    fill = word
+  )
+) + 
+  geom_col(color = "Black") +
+  geom_text(
+    aes(label = freq), 
+    vjust = -0.2
+  ) +
+  xlab("Word") +
+  ylab("Count") +
+  ggtitle("Survey Word Sentiments - Positive")
+```
+
+#### Negative Words
+
+```{R Negative Words}
+generate_wordcloud(negative_words)
+negative_words <- head(negative_words,10)
+negative_words$word <- factor(negative_words$word, levels = negative_words[order(negative_words$freq, decreasing = TRUE),"word"])
+
+ggplot(
+  data = negative_words,
+  aes(
+    x = word,
+    y = freq,
+    fill = word
+  )
+) + 
+  geom_col(color = "Black") +
+  geom_text(
+    aes(label = freq), 
+    vjust = -0.2
+  ) +
+  xlab("Word") +
+  ylab("Count") +
+  ggtitle("Survey Word Sentiments - Negative")
+```
+
+#### Neutral Words
+
+```{R Neutral Words}
+generate_wordcloud(neutral_words)
+neutral_words <- head(neutral_words,10)
+neutral_words$word <- factor(neutral_words$word, levels = neutral_words[order(neutral_words$freq, decreasing = TRUE),"word"])
+
+ggplot(
+  data = neutral_words,
+  aes(
+    x = word,
+    y = freq,
+    fill = word
+  )
+) + 
+  geom_col(color = "Black") +
+  geom_text(
+    aes(label = freq), 
+    vjust = -0.2
+  ) +
+  xlab("Word") +
+  ylab("Count") +
+  ggtitle("Survey Word Sentiments - Neutral")
+
+```  
+
+## Conclusion  
+We follow the 5 steps of FCA to identify the opinions level that expressed on available aspects in the sentence.  
+Actually in this observation, we cannot do fully performed the stopwords removal, there is a word included in positive categories which is month name (August). We review the tokenized on the basis of the appearance of a list of puctuation marks, white spaces and other punctuations. Those punctuations marks were retained in order to decided the number of sentences. The next step is lematizations and lematized words has passed and in input for the next layar of observation. And at the end, aspect-level sentiment score were computed in order to make the category of sentence.  
+
+The categories generated a list that generated the sentiment score. The association rules generates the output containing document conclusions and sentiment score. It appear together in a list of the document.  
+
+The suggestion for Sriwijaya Air is to make a tool for complaint handling and representation to decrease the negative score. For now, the positive sentiment occurs more compared to the negative one. I want to know more about the sentiments in the Q1 and Q2 of 2021 after the accident. In the future, I will try to find out more about how Indonesian says about it. At the end, I support Sriwijaya Air. Don't stop flying.  
+
+## Reference
+[1. Sriwijaya Air] (https://en.wikipedia.org/wiki/Sriwijaya_Air)  
+[2. Interpret the Sentiment Analysis] (https://monkeylearn.com/sentiment-analysis/)  
+[3. Sriwijaya Air Goes Missing] (https://onemileatatime.com/sriwijaya-air-737-crash-indonesia/)  
+[4. Corpus] (https://www.rdocumentation.org/packages/tm/versions/0.7-8/topics/Corpus)
+[5. Fuzzy Format Concept Analysis Based Opinion Mining for CRM in Financial Services - a paper from Kumar Ravi, Vadlamani Ravi and P. Sree Rama Krishna Prasad, 2017]
